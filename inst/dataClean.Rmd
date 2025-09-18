@@ -1,0 +1,176 @@
+---
+title: "Health Data Set Characteristics"
+author: "Mariana Oliveira"
+date: "2025-06-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Health Data Set Characteristics
+
+### Load data
+
+Data sets selected:
+- subject area "Health and Medicine"
+- in decreasing order of number of views on UCI repo
+- available in ucimlrepo R package
+- only one target variable
+
+
+Excluding the following, which do not contain demographic features:
+- Breast Cancer Wisconsin (Diagnostic)
+- Parkinsons 
+- Liver Disorders
+- Hepatitis
+- Risk Factor Prediction of Chronic Kidney Disease
+
+```{r}
+UCI_health <- c("Heart Disease", 
+                "Estimation of Obesity Levels Based On Eating Habits and Physical Condition ", 
+                "CDC Diabetes Health Indicators", 
+                "Breast Cancer", 
+                "Heart Failure Clinical Records", 
+                "Diabetes 130-US Hospitals for Years 1999-2008", 
+                "Maternal Health Risk",
+                "National Poll on Healthy Aging (NPHA)",
+                "AIDS Clinical Trials Group Study 175",
+                "National Health and Nutrition Health Survey 2013-2014 (NHANES) Age Prediction Subset",
+                "Cirrhosis Patient Survival Prediction",
+                "ILPD (Indian Liver Patient Dataset)",
+                "HCV data",
+              "Glioma Grading Clinical and Mutation Features",
+              "Differentiated Thyroid Cancer Recurrence"
+              )
+
+ord <- c(10, 9, 12, 3, 5, 4, 15, 14, 7, 11, 6, 13, 1, 2, 8)
+UCI_health <- UCI_health[ord]
+
+uci_data <- lapply(UCI_health, function(x){
+    ucimlrepo::fetch_ucirepo(x)
+})
+
+names(uci_data) <- paste0("D", 1:length(UCI_health))
+names(UCI_health) <- names(uci_data)
+```
+
+```{r}
+sapply(uci_data, function(x) nrow(x$data$original))
+```
+
+
+```{r}
+lapply(uci_data, function(x) x$variables[, -which(colnames(x$variables) == "description")])
+```
+
+```{r}
+sapply(uci_data, function(x) all(colnames(x$data$original) %in% x$variables$name) & all(x$variables$name %in% colnames(x$data$original)) )
+```
+
+### Clean data 
+
+```{r}
+uci_data_fix <- uci_data
+# Fix issues with column names
+for(d in 1:length(uci_data_fix)){
+  df <- uci_data_fix[[d]]$data$original
+  # fix column names on the data set
+  colnames(df) <- make.names(colnames(df))
+  # fix column names on the metadata table
+  vars <- uci_data_fix[[d]]$variables
+  vars$name <- make.names(vars$name)
+  
+  if(UCI_health[d] == "Glioma Grading Clinical and Mutation Features"){
+    vars <- rbind(data.frame(name = "Case_ID", role = "ID", type = NA, demographic = NA, description = NA, units = NA, missing_values = NA), vars)
+  }
+  if(UCI_health[d] == "National Health and Nutrition Health Survey 2013-2014 (NHANES) Age Prediction Subset")
+    vars[which(vars$demographic == "Gender"),"type"] <- "Binary"
+  
+  uci_data_fix[[d]]$data$original <- df
+  uci_data_fix[[d]]$variables <- vars
+}
+```
+
+```{r}
+targets <- sapply(uci_data_fix, function(d){
+  d$variables$name[which(d$variables$role == "Target")] 
+})
+variables <- lapply(uci_data_fix, function(x) x$variables)
+tasks <- t(sapply(variables, function(x) x[which(x$role == "Target"), c("type", "role")]))
+proc_data <- lapply(uci_data_fix, function(x) x$data$original)
+```
+
+```{r}
+# Remove unnecessary variables
+for(d in 1:length(proc_data)){
+  df <- proc_data[[d]]
+  vars <- variables[[d]]
+  
+  if(any(vars$role == "Other")){
+    print(paste("Removed", length(which(colnames(df) %in% vars$name[vars$role == "Other"])), "variable(s) with role 'Other' from data set", d, ":", UCI_health[d]))
+    df <- df[,-which(colnames(df) %in% vars$name[vars$role == "Other"])]
+  }
+  if(any(vars$role == "ID")){
+        print(paste("Removed", length(which(colnames(df) %in% vars$name[vars$role == "ID"])), "variable(s) with role 'ID' from data set", d, ":", UCI_health[d]))
+    df <- df[,-which(colnames(df) %in% vars$name[vars$role == "ID"])]
+  }
+    
+  
+  proc_data[[paste0("D",d)]] <- df
+}
+```
+
+```{r}
+# Encode missing data 
+for(d in 1:length(proc_data)){
+  df <- proc_data[[d]]
+  vars <- variables[[d]]
+  
+  if(UCI_health[d] == "Diabetes 130-US Hospitals for Years 1999-2008")
+    df$gender <- ifelse(df$gender == "Unknown/Invalid", NA, df$gender)
+  if(UCI_health[[d]] == "National Poll on Healthy Aging (NPHA)")
+    df <- as.data.frame(apply(proc_data[[d]], 2, function(x) ifelse(x == -1, NA, x)))
+  if(UCI_health[d] == "Cirrhosis Patient Survival Prediction"){
+    df[df == "NaNN"] <- NA
+    df <- dplyr::mutate_at(df, vars$name[which(vars$type == "Integer" & vars$role == "Feature")], as.numeric)
+  }
+  
+  proc_data[[paste0("D",d)]] <- df
+}
+```
+
+```{r}
+# Fix data types
+for(d in 1:length(proc_data)){
+  print(d)
+  df <- proc_data[[d]]
+  vars <- variables[[d]]
+  
+  df <- dplyr::mutate_at(df, vars$name[which(vars$type %in% c("Categorical", "Binary"))], ~ factor(.x, levels = unique(.x)[which(!(is.na(unique(.x)) | as.character(unique(.x)) %in% c("NaN", "NaNN", "<NA>")))]))
+
+  tgt <- targets[d]
+  # target integers with <10 classes considered as classification
+  if(vars[which(vars$name == tgt),"type"] == "Integer"){
+    if(length(unique(df[[tgt]])) < 10)
+      df[[tgt]] <- factor(df[[tgt]], levels = unique(df[[tgt]])[which(!(is.na(unique(df[[tgt]])) | as.character(unique(df[[tgt]])) %in% c("NaN", "NaNN", "<NA>")))])
+  }
+  
+  uniqCol <- which(sapply(df, function(x) length(unique(x))) == 1)
+  if(length(uniqCol) > 0){
+    print(paste("Removed", length(uniqCol), "variables from data set", d, ":", UCI_health[d]))
+    print(colnames(df)[uniqCol])
+    df <- df[,-uniqCol]
+    
+  }
+  
+  proc_data[[paste0("D",d)]] <- df
+}
+```
+
+```{r}
+save(UCI_health, proc_data, targets, variables, file = "data.Rdata")
+```
+
+

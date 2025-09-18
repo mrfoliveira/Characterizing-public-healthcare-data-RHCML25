@@ -1,0 +1,241 @@
+---
+title: "Health Data Set Characteristics"
+author: "Mariana Oliveira"
+date: "2025-06-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Health Data Set Characteristics
+
+### Data set characteristics
+
+```{r}
+load("data.Rdata")
+library(dplyr)
+library(ggplot2)
+source("../R/scoring_functions.R")
+source("../R/utils.R")
+```
+
+
+```{r}
+sourceInfo <- as.data.frame(t(sapply(1:length(UCI_health), function(i) 
+  data.frame(ID = paste0("D",i),
+             Name = UCI_health[i],
+             DOI = ""))))
+
+basicInfo <- dplyr::bind_rows(lapply(1:length(proc_data), function(i){
+  df <- proc_data[[i]]
+  vars <- variables[[i]]
+  tgt <- which(colnames(df) == targets[i])
+  uniqTgt <- unique(df[,tgt])
+  numFeats <- which(sapply(df[,-tgt], function(x) is.numeric(x)))
+  sensVars <-vars[which(!is.na(vars$demographic) & vars$role != "Other"), "demographic"]
+  catFeats <- which(sapply(df[,-tgt], function(x) !is.numeric(x)))
+  data.frame(ID = paste0("D",i),
+             # Name = UCI_health[i],
+             # Type of target variable
+             Type = ifelse(length(unique(df[,tgt])) == 2, "Binary", ifelse(!is.numeric(df[,tgt]), "Multi-class", "Regression")),
+             NumClasses = ifelse(is.numeric(df[,tgt]), NA, length(uniqTgt)),
+             NumInstances = nrow(df),
+             FeaturesType = ifelse(length(numFeats) == ncol(df)-1, "Numeric", 
+                                   ifelse(length(numFeats) == 0, "Categorical","Mixed")),
+             NbFeatures = ncol(df),
+             NbNum = length(numFeats),
+             NbCat = ncol(df) - length(numFeats) - 1,
+             NumSens = length(sensVars),
+             SensFeatures = paste0(sort(unique(sensVars)), collapse = ", "))
+}))
+
+# print(xtable::xtable(basicInfo[,-2], digits = 0), include.rownames = F)
+basicInfo[,-2]
+```
+
+### Protected features
+
+```{r}
+sensitive <- lapply(variables, function(x) unique(x$demographic[which(!is.na(x$demographic))]))
+s_names <- c(Race = "R", Sex = "S", Gender = "G", Age = "A", 
+             Education.Level = "E", Income = "I", Sexual.Orientation = "O")
+
+d1 <- data.frame(dem=unlist(sensitive))
+d2 <- data.frame(dem = unlist(lapply(sensitive, function(x) ifelse(length(x) ==0, NA, paste0(sort(unique(s_names[x])), collapse=",")))))
+
+d <- rbind(d1 %>% mutate(dem = s_names[make.names(dem)]) %>% group_by(dem) %>% count() %>% mutate(type = "individual"), d2 %>% group_by(dem) %>% count() %>% mutate(type = "combined"))
+
+ggplot(d, aes(x=reorder(dem, dem,function(x) length(x)), y = n)) + geom_bar(stat = "identity") +
+  facet_grid(.~factor(type, levels = c("individual", "combined")), scales = "free", space= "free") +
+  xlab("Demographic") + ylab("number of data sets") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+**Fig. 3(a)**  Demographic variables available and their imbalance measures: frequency of availability.
+
+```{r}
+sens_vars_imb <- dplyr::bind_rows(
+  lapply(1:length(proc_data), function(d){
+  vars <- variables[[d]]
+  
+  if(length(which(!is.na(vars$demographic) & vars$role != "Target")) > 0){
+    cat(".")
+    dem_vars <- vars[which(!is.na(vars$demographic) & vars$role != "Target"), c("name", "demographic", "type")]
+    dem_vars <- dem_vars[which(dem_vars$name %in% colnames(proc_data[[d]])), ] # some were removed because there was only one value
+    
+    df <- proc_data[[d]]
+    colnames(df)[which(colnames(df) %in% dem_vars$name)] <- make.names(dem_vars$demographic)
+    
+    imbScore <- list()
+    for(c in 1:length(dem_vars$demographic)){
+      dem_c <- make.names(dem_vars$demographic)[c]
+      type <- dem_vars[c,"type"]
+      if(is.numeric(df[,dem_c]) & type %in% c("Continuous", "Integer") &
+          length(unique(df[,dem_c])) > 10){
+        df[,dem_c] <- as.factor(cut(df[,dem_c], 5))
+        
+      }else{
+        if(is.numeric(df[,dem_c]) & type %in% c("Integer", "Binary") &
+          length(unique(df[,dem_c])) < 10)
+          df[,dem_c] <- as.factor(df[,dem_c])
+      }
+      
+      imbScore[[dem_c]] <- data.frame(C1 = c.B1(df[,dem_c]), C2 = c.B2(df[,dem_c]))
+    }
+    imbScore <- dplyr::bind_rows(imbScore, .id = "Demographic")
+  }
+}), .id = "data")
+
+rownames(sens_vars_imb) <- NULL
+sens_vars_imb$data <- paste0("D", sens_vars_imb$data)
+sens_vars_imb
+
+sens_vars_heat <- sens_vars_imb %>% dplyr::mutate(Demographic = s_names[Demographic]) %>%
+  tidyr::unite("data", data:Demographic, sep = "_")
+rownames(sens_vars_heat) <- sens_vars_heat$data
+ComplexHeatmap::Heatmap(tp(sens_vars_heat), cluster_rows = FALSE)
+```
+
+**Fig. 3(b)**  Demographic variables available and their imbalance measures: imbalance measures.
+
+```{r}
+outScore <- dplyr::bind_rows(lapply(proc_data, function(x){
+  cat("."); 
+  OutlierScore(x)$scores
+}), .id = "data")
+outScore
+```
+
+```{r}
+missScore <- dplyr::bind_rows(lapply(proc_data, function(x) MissingScore(x)$scores), .id = "data")
+missScore
+```
+
+
+```{r}
+uniqScore <- dplyr::bind_rows(lapply(proc_data, function(x) UniquenessScore(x)$scores), .id = "data")
+uniqScore
+```
+
+```{r}
+corrScore <- dplyr::bind_rows(lapply(1:length(proc_data), function(d) CorrelationScore(proc_data[[d]], tgt = targets[[d]])$scores), 
+                             .id = "data")
+corrScore$data <- paste0("D", corrScore$data)
+corrScore
+```
+
+```{r}
+set.seed(123)
+cat(paste0(paste0(rep(".", 15), collapse = ""),"\n"))
+compScore <- dplyr::bind_rows(lapply(1:length(proc_data), function(d){
+  cat(".")
+  ComplexityScore(data = proc_data[[d]], tgt = targets[[d]], groups = "all")$scores
+}), 
+                             .id = "data")
+compScore$data <- paste0("D", compScore$data)
+compScore
+```
+
+```{r}
+sds <- sapply(compScore %>% dplyr::select(-contains("sd")), sd, na.rm = T)[-1]
+types <- stringr::str_split_fixed(names(sds), pattern = "\\.", 2)[,1]
+
+data.frame(type = types, sd = sds) %>% group_by(type) %>% summarize(avg_sd = mean(sd)) %>% arrange(-avg_sd)
+```
+
+
+```{r}
+allScores <- plyr::join_all(list(corrScore, outScore, missScore, uniqScore, compScore), by='data', type='left') 
+```
+
+```{r}
+qualScores <- plyr::join_all(list(outScore[,c(1,4,3)], missScore[,c(1,3:7, 10, 8:9)], uniqScore, corrScore[,c(1,2,5,4,6)]), by='data', type='left')
+qualScores[,2:13] <- qualScores[,2:13] / 100
+
+new_names <- c(data = 'data', rare_cat_avg = 'rare.avg', rare_cat_sd = 'rare.sd', iqr_perc_avg = 'outIQR.avg', iqr_perc_sd = 'outIQR.sd', missing_perc = 'miss', anyNA_perRow = 'incR', manyMissPerRow_perc = 'vIncR', missPerRow_perc_avg = 'missR.avg', missPerRow_perc_max = 'missR.max', anyNA_perCol = 'incC', missPerCol_perc_avg = 'missC.avg', missPerCol_perc_max = 'missC.max', manyMissPerCol_perc = 'vIncC', UniqScore = 'dupl', perc_corr = 'strCorr', perc_corr_signif = 'signifCorr', corr_avg = 'corr.avg', corr_abs_avg = 'absCorr.avg', corr_std = 'corr.sd')
+
+colnames(qualScores) <- new_names[colnames(qualScores)]
+
+qualScores <- qualScores[,c(-5,-7,-9,-11,-14)]
+
+pal <- circlize::colorRamp2(quantile(unlist(qualScores[sapply(qualScores, is.numeric)]), seq(0, 1, by = 0.25), na.rm = T), viridis::viridis(5))
+ha <- ComplexHeatmap::HeatmapAnnotation(#Type = unlist(basicInfo$Type),
+  numFeats = ComplexHeatmap::anno_barplot(basicInfo[,c("NbNum","NbCat")]))
+
+hs <- ComplexHeatmap::rowAnnotation(foo = ComplexHeatmap::anno_block(gp = grid::gpar(fill = c("#1b9e77",
+"#d95f02","#7570b3")),
+        labels = c("accuracy", "completeness", "redundancy"), 
+        labels_gp = grid::gpar(col = "white", fontsize = 10)))
+
+  
+
+ComplexHeatmap::Heatmap(tp(qualScores), 
+                        cluster_rows = F, cluster_columns = T, 
+                        #right_annotation = hs,
+                        heatmap_legend_param = list(title = "value"),
+                        col = pal,
+                        cell_fun = function(j, i, x, y, width, height, fill) { grid::grid.text(ifelse(!is.na(tp(qualScores)[i, j]), sprintf("%.1f", tp(qualScores)[i, j]), " "), x, y, gp = grid::gpar(fontsize = 10,col = "black"))} ,  
+                        row_split = c(rep("acc.", 2), 
+                                      rep("complet.", 4),
+                                      rep("redund.", 4)))
+
+```
+
+**Fig. 1.** Quality measures computed for the chosen data sets.
+
+```{r}
+pal <- circlize::colorRamp2(quantile(unlist(compScore[sapply(compScore, is.numeric)]), seq(0, 1, by = 0.25), na.rm = T), viridis::viridis(5))
+
+ha <- ComplexHeatmap::rowAnnotation(
+  NumFeats = ComplexHeatmap::anno_barplot(basicInfo[,c("NbNum","NbCat")]),
+  NbNumFeats = ComplexHeatmap::anno_barplot(basicInfo[,c("NbNum")]),
+  NbCatFeats = ComplexHeatmap::anno_barplot(basicInfo[,c("NbCat")]))
+
+c_names <- colnames(compScore)[-1]
+c_names <- c_names[-grep("\\.sd", c_names)]
+
+my_compScore <- compScore[,c("data",c_names)]
+my_compScore$balance.C1 <- 1 - my_compScore$balance.C1
+
+colnames(my_compScore) <- c("data", stringr::str_split_fixed(c_names, "\\.", n =2)[,2])
+colnames(my_compScore)[19:20] <- c("B1", "B2")
+
+ComplexHeatmap::Heatmap(tp(my_compScore), 
+                        cluster_rows = F, cluster_columns = T, 
+                        # right_annotation = ha, 
+                        heatmap_legend_param = list(title = "value"),
+                        col = pal,
+                        cell_fun = function(j, i, x, y, width, height, fill) { grid::grid.text(ifelse(!is.na(tp(my_compScore)[i, j]), sprintf("%.1f", tp(my_compScore)[i, j]), " "), x, y, gp = grid::gpar(fontsize = 10,col = "black"))},  
+                        row_split = c(rep("features", 5), 
+                                      rep("neighborhood", 6),
+                                      rep("linearity", 3),
+                                      rep("dimens.", 3),
+                                      rep("bal.", 2),
+                                      rep("network", 3))) 
+
+```
+
+**Fig. 2** Complexity measures computed for the chosen data sets.
+
+
