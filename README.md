@@ -18,19 +18,22 @@ knitr::knit("inst/report.Rmd")
 
 ### BibTeX Reference 
 
-@InProceedings{10.1007/978-3-032-19105-2_25,
-author="Oliveira, Mariana
-and Soares, Carlos",
-editor="Koprinska, Irena
-and Mendes-Moreira, Jo{\~a}o
-and Branco, Paula",
-title="Characterizing Publicly Available Tabular Health Datasets for Responsible Machine Learning",
-booktitle="Machine Learning and Principles and Practice of Knowledge Discovery in Databases",
-year="2026",
-publisher="Springer Nature Switzerland",
-address="Cham",
-pages="351--359",
-isbn="978-3-032-19105-2",
-doi="10.1007/978-3-032-19105-2\_25"
-}
+If you use this code in your work, please cite the following:
 
+```bibtex
+@InProceedings{10.1007/978-3-032-19105-2_25,
+  author="Oliveira, Mariana
+  and Soares, Carlos",
+  editor="Koprinska, Irena
+  and Mendes-Moreira, Jo{\~a}o
+  and Branco, Paula",
+  title="Characterizing Publicly Available Tabular Health Datasets for Responsible Machine Learning",
+  booktitle="Machine Learning and Principles and Practice of Knowledge Discovery in Databases",
+  year="2026",
+  publisher="Springer Nature Switzerland",
+  address="Cham",
+  pages="351--359",
+  isbn="978-3-032-19105-2",
+  doi="10.1007/978-3-032-19105-2\_25"
+}
+```
